@@ -44,7 +44,9 @@ func main() {
 	}
 
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("Bump github.com/%s/%s (%s -> %s)\n", owner, project, oldVersion, newVersion))
+	builder.WriteString(fmt.Sprintf("Bump github.com/%s/%s\n", owner, project))
+	builder.WriteString("\n")
+	builder.WriteString(fmt.Sprintf("%s -> %s\n", oldVersion, newVersion))
 	builder.WriteString("\n")
 	builder.WriteString("Commits:\n")
 
