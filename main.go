@@ -61,16 +61,7 @@ func main() {
 		}
 	}
 
-	f, err := os.CreateTemp("", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if _, err := io.Copy(f, bytes.NewBufferString(builder.String())); err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println(f.Name())
+	fmt.Println(builder.String())
 }
 
 type Response struct {
