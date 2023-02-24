@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -14,33 +14,46 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	if len(os.Args) != 3 {
 		fmt.Fprintln(os.Stderr, "Arguments: owner project")
-		return
+		return errors.New("invalid arguments")
 	}
 
 	owner := os.Args[1]
 	project := os.Args[2]
-	oldVersion := getVersion(owner, project, "-")
-	newVersion := getVersion(owner, project, "+")
+
+	oldVersion, err := getVersion(owner, project, "-")
+	if err != nil {
+		return fmt.Errorf("error checking old version in diff: %w", err)
+	}
+
+	newVersion, err := getVersion(owner, project, "+")
+	if err != nil {
+		return fmt.Errorf("error checking new version in diff: %w", err)
+	}
 
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/compare/%s...%s", owner, project, oldVersion, newVersion)
 
-	fmt.Println(url)
-
 	resp, err := http.Get(url)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("http get failed: %w", err)
 	}
 
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("read all error: %w", err)
 	}
 
 	var response Response
 	if err := json.Unmarshal(b, &response); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("json unmarshal failed: %w", err)
 	}
 
 	var builder strings.Builder
@@ -64,6 +77,7 @@ func main() {
 	}
 
 	fmt.Println(builder.String())
+	return nil
 }
 
 type Response struct {
@@ -79,21 +93,27 @@ type ResponseCommitCommit struct {
 	Message string `json:"message"`
 }
 
-func getVersion(owner, project, ch string) string {
+func getVersion(owner, project, ch string) (string, error) {
 	cmd := exec.Command(
 		"/bin/bash",
 		"-c",
 		fmt.Sprintf(`git diff --cached go.mod | grep "github.com/%s/%s" | grep -- "%s	" | cut -f"2" | cut -d" " -f"2" | cut -d"-" -f"3"`, owner, project, ch),
 	)
 
+	cmd.Stdin = os.Stdin
+
 	var out bytes.Buffer
 	cmd.Stdout = &out
 
-	err := cmd.Run()
-
-	if err != nil {
-		log.Fatal(err)
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("command failed: %w", err)
 	}
 
-	return strings.TrimSpace(out.String())
+	version := strings.TrimSpace(out.String())
+
+	if len(version) != 12 {
+		return "", errors.New("version information not found")
+	}
+
+	return version, nil
 }
