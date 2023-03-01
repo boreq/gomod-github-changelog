@@ -2,14 +2,12 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -29,14 +27,9 @@ func run() error {
 	owner := os.Args[1]
 	project := os.Args[2]
 
-	oldVersion, err := getVersion(owner, project, "-")
+	oldVersion, newVersion, err := getVersions(owner, project)
 	if err != nil {
-		return fmt.Errorf("error checking old version in diff: %w", err)
-	}
-
-	newVersion, err := getVersion(owner, project, "+")
-	if err != nil {
-		return fmt.Errorf("error checking new version in diff: %w", err)
+		return fmt.Errorf("error checking versions in diff: %w", err)
 	}
 
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/compare/%s...%s", owner, project, oldVersion, newVersion)
@@ -93,27 +86,59 @@ type ResponseCommitCommit struct {
 	Message string `json:"message"`
 }
 
-func getVersion(owner, project, ch string) (string, error) {
-	cmd := exec.Command(
-		"/bin/bash",
-		"-c",
-		fmt.Sprintf(`git diff --cached go.mod | grep "github.com/%s/%s" | grep -- "%s	" | cut -f"2" | cut -d" " -f"2" | cut -d"-" -f"3"`, owner, project, ch),
-	)
+func getVersions(owner, project string) (string, string, error) {
+	var removed, added string
 
-	cmd.Stdin = os.Stdin
+	packageName := fmt.Sprintf(`github.com/%s/%s`, owner, project)
 
-	var out bytes.Buffer
-	cmd.Stdout = &out
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("command failed: %w", err)
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		text := scanner.Text()
+		if !strings.Contains(text, packageName) {
+			continue
+		}
+		if strings.HasPrefix(text, "+	") {
+			added = text
+		}
+		if strings.HasPrefix(text, "-	") {
+			removed = text
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", "", fmt.Errorf("scan failed: %w", err)
 	}
 
-	version := strings.TrimSpace(out.String())
-
-	if len(version) != 12 {
-		return "", errors.New("version information not found")
+	oldVersion, err := getVersion(removed)
+	if err != nil {
+		return "", "", fmt.Errorf("error getting old version: %w", err)
 	}
 
-	return version, nil
+	newVersion, err := getVersion(added)
+	if err != nil {
+		return "", "", fmt.Errorf("error getting new version: %w", err)
+	}
+
+	return oldVersion, newVersion, nil
+}
+
+func getVersion(line string) (string, error) {
+	line = strings.TrimPrefix(line, "+")
+	line = strings.TrimPrefix(line, "-")
+	line = strings.TrimSpace(line)
+
+	parts := strings.Fields(line)
+	if len(parts) != 2 {
+		return "", errors.New("something went wrong with splitting into parts")
+	}
+
+	pseudoVersionOrVersion := strings.Split(parts[1], "-")
+	if len(pseudoVersionOrVersion) == 3 {
+		hash := pseudoVersionOrVersion[2]
+		if len(hash) != 12 {
+			return hash, errors.New("version information not found")
+		}
+		return hash, nil
+	}
+
+	return "", errors.New("invalid length")
 }
